@@ -77,16 +77,60 @@ ADVANCED_CSS = """
   --danger-border: #FECACA;
 }
 
-/* Force light mode regardless of OS/Browser theme preferences */
+/* --------------------------------------------------------------------------
+   STRICT LIGHT THEME ENFORCEMENT (Overrides OS / Browser Dark Mode)
+   -------------------------------------------------------------------------- */
 html, body, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg-app) !important;
   color: var(--text-primary) !important;
   font-family: var(--font-sans) !important;
 }
 
-[data-testid="stSidebar"] {
+/* Sidebar Light Mode & High Contrast */
+section[data-testid="stSidebar"],
+div[data-testid="stSidebarContent"],
+div[data-testid="stSidebarUserContent"] {
   background-color: #FFFFFF !important;
+  color: #0F172A !important;
   border-right: 1px solid var(--border-subtle) !important;
+}
+
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div {
+  color: #0F172A !important;
+}
+
+/* Fix radio button labels (Workflow Mode) */
+div[data-testid="stRadio"] label,
+div[data-testid="stRadio"] label p,
+div[data-testid="stRadio"] label span,
+div[data-testid="stRadio"] div[data-testid="stMarkdownContainer"] p {
+  color: #0F172A !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+
+/* Fix widget labels */
+label[data-testid="stWidgetLabel"],
+label[data-testid="stWidgetLabel"] p,
+label[data-testid="stWidgetLabel"] span {
+  color: #0F172A !important;
+  font-weight: 600 !important;
+}
+
+/* Fix captions so they are clean slate gray, never faint white */
+div[data-testid="stCaptionContainer"],
+div[data-testid="stCaptionContainer"] p {
+  color: #475569 !important;
+  font-size: 11.5px !important;
+}
+
+/* Ensure inputs have solid dark text and light backgrounds */
+input, textarea {
+  color: #0F172A !important;
+  background-color: #FFFFFF !important;
 }
 
 [data-testid="stHeader"] {
@@ -740,10 +784,26 @@ with st.sidebar:
     all_keys_valid = gem_ok and tav_ok
 
     if not all_keys_valid:
+        with st.expander("Enter API Keys Directly", expanded=True):
+            st.caption("Paste keys below to connect immediately for this session:")
+            input_gem = st.text_input("Gemini API Key:", type="password", key="direct_gemini_key", placeholder="AIzaSy...")
+            input_tav = st.text_input("Tavily API Key:", type="password", key="direct_tavily_key", placeholder="tvly-...")
+            if st.button("Connect Keys", type="primary", use_container_width=True):
+                if input_gem.strip():
+                    os.environ["GOOGLE_API_KEY"] = input_gem.strip()
+                    os.environ["GEMINI_API_KEY"] = input_gem.strip()
+                if input_tav.strip():
+                    os.environ["TAVILY_API_KEY"] = input_tav.strip()
+                check_environment_status.clear()
+                st.rerun()
+
         st.markdown(
             """
-            <div style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 12px; color: #92400E;">
-              API credentials missing. Configure keys in <code>.env</code> and test via <code>python scripts/check_setup.py</code>.
+            <div style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 11.5px; color: #92400E; line-height: 1.45;">
+              <strong>For permanent connection on Streamlit Cloud:</strong><br/>
+              In your app dashboard, go to <em>Manage app &gt; Settings &gt; Secrets</em>, and paste:<br/>
+              <code>GOOGLE_API_KEY = "..."</code><br/>
+              <code>TAVILY_API_KEY = "..."</code>
             </div>
             """,
             unsafe_allow_html=True,

@@ -12,8 +12,8 @@ venv/
 .venv/
 env/
 
-# Streamlit config / cache
-.streamlit/
+# Streamlit config (track config.toml, ignore local secrets)
+.streamlit/secrets.toml
 
 # Scratch & temporary test scripts
 scratch/
