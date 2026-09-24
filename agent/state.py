@@ -153,6 +153,12 @@ class NewsletterState(TypedDict):
     # - Why: Provides an auditable log of status messages (e.g. "Planning complete", "Critique: FAIL - reasons...") for the UI.
     stage_log: list[str]
 
+    # stage_timings:
+    # - Writes: planner_node, researcher_node, writer_node, critic_node, reviser_node, human_review_node, publisher_node
+    # - Reads: app.py, main.py, latency profiler
+    # - Why: Tracks duration in seconds for each pipeline stage for debugging, metrics, and UI display.
+    stage_timings: dict[str, Any]
+
 
 def initial_state(
     goal: str,
@@ -201,4 +207,5 @@ def initial_state(
         "final_markdown": "",
         "output_path": "",
         "stage_log": ["Agent initialized"],
+        "stage_timings": {},
     }

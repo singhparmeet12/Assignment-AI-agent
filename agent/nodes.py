@@ -13,6 +13,7 @@ This module implements the complete 7-node LangGraph execution pipeline:
 
 import os
 import sys
+import time
 import json
 import logging
 from datetime import datetime
@@ -284,6 +285,7 @@ def planner_node(state: NewsletterState) -> dict:
     Returns:
         dict: State update containing 'plan', 'search_queries', and updated 'stage_log'.
     """
+    t0 = time.perf_counter()
     goal = state.get("goal", "").strip() or "Create a weekly newsletter covering the latest AI agent breakthroughs"
     logger.info(f"Running planner_node for goal: '{goal[:80]}...'")
 
@@ -352,14 +354,17 @@ def planner_node(state: NewsletterState) -> dict:
             "multi-agent systems enterprise adoption",
         ]
 
-    stage_entry = f"Planning complete: {len(queries)} queries generated"
+    duration = round(time.perf_counter() - t0, 2)
+    stage_entry = f"Planning complete: {len(queries)} queries generated [{duration:.1f}s]"
     logger.info(stage_entry)
 
     current_log = state.get("stage_log", [])
+    prev_timings = dict(state.get("stage_timings", {}))
     return {
         "plan": plan_text,
         "search_queries": queries,
         "stage_log": current_log + [stage_entry],
+        "stage_timings": {**prev_timings, "planning": duration},
     }
 
 
@@ -368,23 +373,7 @@ def planner_node(state: NewsletterState) -> dict:
 # ==============================================================================
 
 def researcher_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Researcher Node (Self-Correcting):
-    Executes search queries using tools/search.py (Tavily) and synthesizes findings.
-    If research returns 0 summaries, autonomously adapts across multiple attempts:
-    - Attempt 1: Standard 30-day news search.
-    - Attempt 2: Widens window to 90 days.
-    - Attempt 3: Widens window to 180 days and simplifies queries to broader terms.
-    If all attempts are exhausted with 0 summaries, sets research_failed=True so
-    downstream nodes write an honest notice instead of hallucinating content.
-
-    Args:
-        state: Current NewsletterState.
-
-    Returns:
-        dict: State update containing 'research_attempts', 'search_queries',
-              'raw_search_results', 'research_summary', 'research_failed', and 'stage_log'.
-    """
+    t0 = time.perf_counter()
     attempt = state.get("research_attempts", 0) + 1
     max_attempts = state.get("max_research_attempts", 3)
     original_queries = state.get("search_queries", [])
@@ -416,10 +405,13 @@ def researcher_node(state: NewsletterState) -> dict:
 
     logger.info(attempt_msg)
 
-    # Step 1: Execute Tavily search with active parameters
+    # Step 1: Execute Tavily search with active parameters (instrument search timing)
+    t_search_0 = time.perf_counter()
     raw_results = search_news(queries=active_queries, max_results_per_query=5, days_back=days_back)
+    search_duration = round(time.perf_counter() - t_search_0, 2)
 
-    # Step 2: Synthesize and rank findings with the shared Gemini LLM
+    # Step 2: Synthesize and rank findings with the shared Gemini LLM (instrument synthesis timing)
+    t_synth_0 = time.perf_counter()
     researcher_llm = get_shared_gemini_llm(temperature=0.1)
     topic_hint = state.get("goal", "AI agents")
     synthesized_summaries = synthesize_research(
@@ -428,14 +420,17 @@ def researcher_node(state: NewsletterState) -> dict:
         top_n=7,
         focus_topic=topic_hint
     )
+    synth_duration = round(time.perf_counter() - t_synth_0, 2)
+    total_research_duration = round(time.perf_counter() - t0, 2)
 
     new_logs = [attempt_msg]
+    timing_suffix = f"[{total_research_duration:.1f}s: {search_duration:.1f}s search + {synth_duration:.1f}s synthesis]"
 
     if synthesized_summaries:
         research_failed = False
         outcome_msg = (
             f"Research complete (attempt {attempt}/{max_attempts}): found {len(raw_results)} articles, "
-            f"synthesized {len(synthesized_summaries)} summaries"
+            f"synthesized {len(synthesized_summaries)} summaries {timing_suffix}"
         )
         logger.info(outcome_msg)
         new_logs.append(outcome_msg)
@@ -443,17 +438,18 @@ def researcher_node(state: NewsletterState) -> dict:
         if attempt < max_attempts:
             research_failed = False
             outcome_msg = (
-                f"Research attempt {attempt}/{max_attempts} returned 0 summaries. "
+                f"Research attempt {attempt}/{max_attempts} returned 0 summaries {timing_suffix}. "
                 "Triggering self-correction retry with broader parameters..."
             )
             logger.warning(outcome_msg)
             new_logs.append(outcome_msg)
         else:
             research_failed = True
-            outcome_msg = f"Research failed after {max_attempts} attempts — no grounded sources found."
+            outcome_msg = f"Research failed after {max_attempts} attempts — no grounded sources found {timing_suffix}."
             logger.warning(outcome_msg)
             new_logs.append(outcome_msg)
 
+    prev_timings = dict(state.get("stage_timings", {}))
     return {
         "research_attempts": attempt,
         "search_queries": active_queries,
@@ -461,6 +457,12 @@ def researcher_node(state: NewsletterState) -> dict:
         "research_summary": synthesized_summaries,
         "research_failed": research_failed,
         "stage_log": current_log + new_logs,
+        "stage_timings": {
+            **prev_timings,
+            "research": total_research_duration,
+            "research_search": search_duration,
+            "research_synthesis": synth_duration,
+        },
     }
 
 
@@ -469,18 +471,7 @@ def researcher_node(state: NewsletterState) -> dict:
 # ==============================================================================
 
 def writer_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Writer Node:
-    Transforms curated research summaries and the editorial plan into a full markdown
-    newsletter draft. If critique or human feedback exists (revision iteration),
-    it directly targets and remedies those issues rather than rewriting from scratch.
-
-    Args:
-        state: Current NewsletterState.
-
-    Returns:
-        dict: State update containing 'draft_markdown', 'subject_line', and 'stage_log'.
-    """
+    t0 = time.perf_counter()
     plan = state.get("plan", "Standard AI Agent Weekly Overview")
     research_summary = state.get("research_summary", [])
     critique = state.get("critique", {})
@@ -630,14 +621,22 @@ We will resume standard weekly briefings as soon as verified developments are co
     if not subject_line:
         subject_line = "The Agentic Dispatch: Autonomous Intelligence Weekly"
 
-    stage_entry = f"Draft written (revision {revision_count})"
+    duration = round(time.perf_counter() - t0, 2)
+    stage_entry = f"Draft written (revision {revision_count}) [{duration:.1f}s]"
     logger.info(stage_entry)
 
     current_log = state.get("stage_log", [])
+    prev_timings = dict(state.get("stage_timings", {}))
+    prev_writing = prev_timings.get("writing", [])
+    if not isinstance(prev_writing, list):
+        prev_writing = [prev_writing] if prev_writing else []
+    new_writing = prev_writing + [duration]
+
     return {
         "draft_markdown": draft_markdown,
         "subject_line": subject_line,
         "stage_log": current_log + [stage_entry],
+        "stage_timings": {**prev_timings, "writing": new_writing},
     }
 
 
@@ -664,18 +663,7 @@ The Self-Critique & Revision Loop:
 
 
 def critic_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Critic Node:
-    Conducts a rigorous, rubric-driven editorial critique of the current draft.
-    Evaluates factual grounding against research summaries, coverage (5-7 stories),
-    writing flow, structural elements, and resolution of prior revision issues.
-
-    Args:
-        state: Current NewsletterState containing 'draft_markdown', 'research_summary', etc.
-
-    Returns:
-        dict: State update containing 'critique' and updated 'stage_log'.
-    """
+    t0 = time.perf_counter()
     draft_markdown = state.get("draft_markdown", "").strip()
     research_summary = state.get("research_summary", [])
     subject_line = state.get("subject_line", "Untitled")
@@ -857,12 +845,19 @@ def critic_node(state: NewsletterState) -> dict:
         suggestions = "Draft coverage satisfies the 5-7 story requirement and fully utilizes available research summaries."
 
     status_str = "PASS" if passed else "FAIL"
+    duration = round(time.perf_counter() - t0, 2)
     stage_entry = (
-        f"Critique (revision {revision_count}): {status_str} - score {score}/10, {len(issues)} issues"
+        f"Critique (revision {revision_count}): {status_str} - score {score}/10, {len(issues)} issues [{duration:.1f}s]"
     )
     logger.info(stage_entry)
 
     current_log = state.get("stage_log", [])
+    prev_timings = dict(state.get("stage_timings", {}))
+    prev_critique = prev_timings.get("critique", [])
+    if not isinstance(prev_critique, list):
+        prev_critique = [prev_critique] if prev_critique else []
+    new_critique = prev_critique + [duration]
+
     return {
         "critique": {
             "passed": passed,
@@ -872,31 +867,29 @@ def critic_node(state: NewsletterState) -> dict:
             "score": score,
         },
         "stage_log": current_log + [stage_entry],
+        "stage_timings": {**prev_timings, "critique": new_critique},
     }
 
 
 def reviser_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Reviser Node:
-    Acts as the bookkeeping and transition step in the self-critique loop.
-    Increments the revision counter and logs the attempt before routing
-    back to writer_node (which performs the actual rewrite).
-
-    Args:
-        state: Current NewsletterState.
-
-    Returns:
-        dict: State update incrementing 'revision_count' and logging the transition.
-    """
+    t0 = time.perf_counter()
     next_revision = state.get("revision_count", 0) + 1
     max_revisions = state.get("max_revisions", 2)
-    stage_entry = f"Revising draft (attempt {next_revision}/{max_revisions})..."
+    duration = round(time.perf_counter() - t0, 2)
+    stage_entry = f"Revising draft (attempt {next_revision}/{max_revisions})... [{duration:.1f}s]"
     logger.info(stage_entry)
 
     current_log = state.get("stage_log", [])
+    prev_timings = dict(state.get("stage_timings", {}))
+    prev_revising = prev_timings.get("revising", [])
+    if not isinstance(prev_revising, list):
+        prev_revising = [prev_revising] if prev_revising else []
+    new_revising = prev_revising + [duration]
+
     return {
         "revision_count": next_revision,
         "stage_log": current_log + [stage_entry],
+        "stage_timings": {**prev_timings, "revising": new_revising},
     }
 
 
@@ -905,23 +898,10 @@ def reviser_node(state: NewsletterState) -> dict:
 # ==============================================================================
 
 def human_review_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Human Review Node:
-    Serves as the interactive checkpoint boundary in Human-in-the-Loop (HITL) mode.
-    Pauses graph execution using LangGraph's interrupt() to surface the candidate
-    newsletter draft, subject line, critique score, and revision count for editorial sign-off.
-
-    NOTE: In 'autonomous' mode, this node is skipped entirely by conditional routing edges
-    in agent/graph.py. Therefore, execution only reaches this node when state['mode'] is
-    'human_in_loop'.
-
-    Args:
-        state: Current NewsletterState.
-
-    Returns:
-        dict: State update containing 'approved' (bool), optional 'human_feedback' (str),
-              and updated 'stage_log'.
-    """
+    t0 = time.perf_counter()
+    mode_val = state.get("mode", "unknown")
+    logger.info(f"human_review_node ENTERED - mode={mode_val}, about to call interrupt()")
+    print(f"human_review_node ENTERED - mode={mode_val}, about to call interrupt()", flush=True)
     draft = state.get("draft_markdown", "")
     subject = state.get("subject_line", "The Agentic Dispatch")
     critique = state.get("critique", {})
@@ -940,8 +920,11 @@ def human_review_node(state: NewsletterState) -> dict:
         "Triggering graph interrupt for human editorial review..."
     )
 
+    t_prep = time.perf_counter() - t0
+
     # Genuine LangGraph interruption: execution suspends here until resumed with input
     user_decision = interrupt(interrupt_payload)
+    t_resume = time.perf_counter()
     logger.info(f"Human review resumed with decision payload: {user_decision}")
 
     # Robust parsing of human decision
@@ -972,44 +955,36 @@ def human_review_node(state: NewsletterState) -> dict:
     elif user_decision is True:
         is_approved = True
 
+    review_duration = round(t_prep + (time.perf_counter() - t_resume), 2)
     current_log = state.get("stage_log", [])
+    prev_timings = dict(state.get("stage_timings", {}))
 
     if is_approved:
-        stage_entry = "Human approved draft"
+        stage_entry = f"Human approved draft [{review_duration:.1f}s]"
         logger.info(stage_entry)
         return {
             "approved": True,
             "human_feedback": "",
             "stage_log": current_log + [stage_entry],
+            "stage_timings": {**prev_timings, "human_review": review_duration},
         }
     else:
         stage_entry = (
-            f"Human requested changes: {feedback_text}"
+            f"Human requested changes: {feedback_text} [{review_duration:.1f}s]"
             if feedback_text
-            else "Human requested changes without specific feedback notes"
+            else f"Human requested changes without specific feedback notes [{review_duration:.1f}s]"
         )
         logger.info(stage_entry)
         return {
             "approved": False,
             "human_feedback": feedback_text,
             "stage_log": current_log + [stage_entry],
+            "stage_timings": {**prev_timings, "human_review": review_duration},
         }
 
 
 def publisher_node(state: NewsletterState) -> dict:
-    """
-    LangGraph Publisher Node:
-    Finalizes the approved newsletter. Converts markdown into responsive email HTML,
-    saves timestamped artifacts (.html and .md) to the outputs/ directory, and logs
-    a simulated email dispatch to console.
-
-    Args:
-        state: Current NewsletterState with approved content.
-
-    Returns:
-        dict: State update containing 'final_html', 'final_markdown', 'output_path',
-              'approved'=True, and updated 'stage_log'.
-    """
+    t0 = time.perf_counter()
     draft_markdown = state.get("draft_markdown", "").strip()
     subject_line = state.get("subject_line", "The Agentic Dispatch").strip()
     logger.info(f"Running publisher_node for subject: '{subject_line}'...")
@@ -1052,7 +1027,28 @@ def publisher_node(state: NewsletterState) -> dict:
     print(send_banner)
     logger.info(f"Email simulation output logged. Saved to {html_path.as_posix()}")
 
-    stage_entry = f"Newsletter published: saved to {html_path.as_posix()}, simulated send complete"
+    duration = round(time.perf_counter() - t0, 2)
+    prev_timings = dict(state.get("stage_timings", {}))
+    total_time = duration
+    for k, v in prev_timings.items():
+        if k in ["research_search", "research_synthesis", "total"]:
+            continue
+        if isinstance(v, (int, float)):
+            total_time += v
+        elif isinstance(v, list):
+            total_time += sum(x for x in v if isinstance(x, (int, float)))
+    total_time = round(total_time, 2)
+
+    new_timings = {
+        **prev_timings,
+        "publish": duration,
+        "total": total_time,
+    }
+
+    stage_entry = (
+        f"Newsletter published: saved to {html_path.as_posix()}, simulated send complete "
+        f"[Total pipeline time: {total_time:.1f}s]"
+    )
     current_log = state.get("stage_log", [])
 
     return {
@@ -1061,4 +1057,5 @@ def publisher_node(state: NewsletterState) -> dict:
         "output_path": str(html_path.as_posix()),
         "approved": True,
         "stage_log": current_log + [stage_entry],
+        "stage_timings": new_timings,
     }

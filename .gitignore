@@ -19,3 +19,7 @@ env/
 scratch/
 .idea/
 .vscode/
+
+# Runtime outputs
+outputs/newsletter_*.html
+outputs/newsletter_*.md
