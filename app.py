@@ -36,9 +36,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def check_environment_status():
-    """Validates Gemini and Tavily keys live using minimal test calls, cached for 60 seconds."""
+    """Validates Gemini and Tavily keys live using minimal test calls, cached for 10 seconds."""
     gem_ok, gem_msg = validate_gemini_key()
     tav_ok, tav_msg = validate_tavily_key()
     return gem_ok, gem_msg, tav_ok, tav_msg
