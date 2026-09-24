@@ -208,7 +208,7 @@ def get_shared_gemini_llm(temperature: float = 0.2) -> ChatGoogleGenerativeAI:
         temperature=temperature,
         api_key=api_key,
         max_retries=2,
-        timeout=30,
+        timeout=120,
     )
 
 

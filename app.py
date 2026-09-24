@@ -17,23 +17,37 @@ Design & Presentation Features:
 """
 
 import os
+import sys
 import re
+import traceback
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
-from config import get_secret, validate_gemini_key, validate_tavily_key
+from config import get_secret, get_secret_info, validate_gemini_key, validate_tavily_key, print_secret_lookup_trail
 from agent.graph import run_newsletter_agent, resume_newsletter_agent, stream_newsletter_agent
 from tools.html_generator import markdown_to_email_html
 
 # Load environment configuration
 load_dotenv()
 
+# Print startup secrets diagnostics immediately to Cloud console logs
+print_secret_lookup_trail()
+
 # Configure Streamlit page metadata and layout
 st.set_page_config(
     page_title="Newsletter Agent",
     layout="wide",
     initial_sidebar_state="expanded",
+)
+
+# Temporary prominent debug check at top of UI for Cloud verification
+_dbg_gem_val, _dbg_gem_src = get_secret_info("GOOGLE_API_KEY")
+_dbg_tav_val, _dbg_tav_src = get_secret_info("TAVILY_API_KEY")
+st.info(
+    f"🔍 **Key Status Diagnostics:** "
+    f"Gemini key loaded: **{bool(_dbg_gem_val)}** (source: `{_dbg_gem_src}`) | "
+    f"Tavily key loaded: **{bool(_dbg_tav_val)}** (source: `{_dbg_tav_src}`)"
 )
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -854,7 +868,6 @@ with col_run_r:
         "Run Agent",
         type="primary",
         use_container_width=True,
-        disabled=not all_keys_valid,
     )
 
 
@@ -863,8 +876,16 @@ with col_run_r:
 # ==============================================================================
 
 if run_clicked:
+    print(f"\n[RUN AGENT] Button clicked by user. all_keys_valid={all_keys_valid}, mode={mapped_mode}")
     if not all_keys_valid:
-        st.error("Cannot run agent without valid credentials. Please configure .env.")
+        err_msg = (
+            f"**Cannot run agent without verified credentials:**\n\n"
+            f"- **Google Gemini:** {'Connected' if gem_ok else 'Disconnected'} ({gem_msg})\n\n"
+            f"- **Tavily Search:** {'Connected' if tav_ok else 'Disconnected'} ({tav_msg})\n\n"
+            f"Please verify your Streamlit Cloud Secrets (or local .env file)."
+        )
+        print(f"[RUN AGENT BLOCKED] Credentials validation failed:\n{err_msg}", file=sys.stderr)
+        st.error(err_msg)
     else:
         st.session_state["status"] = "running"
         st.session_state["request_changes_active"] = False
@@ -886,8 +907,10 @@ if run_clicked:
 
         with st.status("Agent Workflow in Progress...", expanded=True) as status_box:
             try:
+                print(f"[RUN AGENT] Invoking stream_newsletter_agent with goal: '{goal_input[:80]}'...")
                 final_response = None
                 for node_name, update, data in stream_newsletter_agent(goal=goal_input.strip(), mode=mapped_mode):
+                    print(f"[RUN AGENT STEP] Completed graph node: '{node_name}'")
                     if node_name == "planner":
                         queries = update.get("search_queries", [])
                         status_box.write(f"Step 1: Editorial Strategy — Formulated {len(queries)} targeted search queries.")
@@ -917,6 +940,7 @@ if run_clicked:
                         final_response = data
 
                 if final_response:
+                    print(f"[RUN AGENT SUCCESS] Workflow finished with status: {final_response.get('status')}")
                     st.session_state["thread_id"] = final_response.get("thread_id")
                     st.session_state["status"] = final_response.get("status")
                     st.session_state["agent_response"] = final_response
@@ -924,12 +948,23 @@ if run_clicked:
                         status_box.update(label="Paused at Checkpoint — Editorial Approval Required", state="complete", expanded=False)
                     else:
                         status_box.update(label="Pipeline execution completed successfully", state="complete", expanded=False)
+                    st.rerun()
+                else:
+                    err_msg = "Workflow completed stream loop without returning a terminal state."
+                    print(f"[RUN AGENT WARNING] {err_msg}", file=sys.stderr)
+                    st.session_state["status"] = "error"
+                    st.session_state["error_message"] = err_msg
+                    status_box.update(label="Execution ended unexpectedly", state="error", expanded=True)
+                    st.error(f"**Pipeline Error:** {err_msg}")
             except Exception as exc:
+                tb_str = traceback.format_exc()
+                print(f"[RUN AGENT EXCEPTION] Pipeline failed with error:\n{tb_str}", file=sys.stderr)
                 st.session_state["status"] = "error"
-                st.session_state["error_message"] = str(exc)
-                status_box.update(label="Pipeline execution failed", state="error", expanded=True)
-
-        st.rerun()
+                st.session_state["error_message"] = f"{type(exc).__name__}: {str(exc)}"
+                status_box.update(label=f"Pipeline execution failed: {type(exc).__name__}", state="error", expanded=True)
+                st.error(f"**Pipeline Execution Error:** `{type(exc).__name__}: {str(exc)}`")
+                with st.expander("Detailed Error Traceback (Streamlit Cloud Debugging)", expanded=True):
+                    st.code(tb_str)
 
 
 # ==============================================================================
@@ -1013,14 +1048,20 @@ if st.session_state["status"] == "paused_for_review":
         if st.button("Approve & Publish", type="primary", use_container_width=True):
             with st.spinner("Resuming graph execution with approval..."):
                 try:
+                    print(f"[HITL] Resuming thread '{thread_id}' with approval...")
                     resume_res = resume_newsletter_agent(thread_id, {"decision": "approve"})
                     st.session_state["status"] = resume_res.get("status")
                     st.session_state["agent_response"] = resume_res
                     st.session_state["request_changes_active"] = False
+                    st.rerun()
                 except Exception as exc:
+                    tb_str = traceback.format_exc()
+                    print(f"[HITL ERROR] Approve & Publish failed:\n{tb_str}", file=sys.stderr)
                     st.session_state["status"] = "error"
-                    st.session_state["error_message"] = str(exc)
-            st.rerun()
+                    st.session_state["error_message"] = f"{type(exc).__name__}: {str(exc)}"
+                    st.error(f"**Approve & Publish Failed:** `{type(exc).__name__}: {str(exc)}`")
+                    with st.expander("Detailed Traceback"):
+                        st.code(tb_str)
 
     with col_reject:
         if st.button("Request Changes", use_container_width=True):
@@ -1042,6 +1083,7 @@ if st.session_state["status"] == "paused_for_review":
                 else:
                     with st.spinner("Resuming agent with revision directives..."):
                         try:
+                            print(f"[HITL] Resuming thread '{thread_id}' with revision directives: {feedback_text.strip()[:60]}...")
                             resume_res = resume_newsletter_agent(
                                 thread_id,
                                 {"decision": "request_changes", "feedback": feedback_text.strip()},
@@ -1049,10 +1091,15 @@ if st.session_state["status"] == "paused_for_review":
                             st.session_state["status"] = resume_res.get("status")
                             st.session_state["agent_response"] = resume_res
                             st.session_state["request_changes_active"] = False
+                            st.rerun()
                         except Exception as exc:
+                            tb_str = traceback.format_exc()
+                            print(f"[HITL ERROR] Revision submission failed:\n{tb_str}", file=sys.stderr)
                             st.session_state["status"] = "error"
-                            st.session_state["error_message"] = str(exc)
-                    st.rerun()
+                            st.session_state["error_message"] = f"{type(exc).__name__}: {str(exc)}"
+                            st.error(f"**Revision Failed:** `{type(exc).__name__}: {str(exc)}`")
+                            with st.expander("Detailed Traceback"):
+                                st.code(tb_str)
 
     # Render Critique Report
     render_critique_panel(critique, revision_count)
