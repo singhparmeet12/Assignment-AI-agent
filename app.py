@@ -784,30 +784,7 @@ with st.sidebar:
     all_keys_valid = gem_ok and tav_ok
 
     if not all_keys_valid:
-        with st.expander("Enter API Keys Directly", expanded=True):
-            st.caption("Paste keys below to connect immediately for this session:")
-            input_gem = st.text_input("Gemini API Key:", type="password", key="direct_gemini_key", placeholder="AIzaSy...")
-            input_tav = st.text_input("Tavily API Key:", type="password", key="direct_tavily_key", placeholder="tvly-...")
-            if st.button("Connect Keys", type="primary", use_container_width=True):
-                if input_gem.strip():
-                    os.environ["GOOGLE_API_KEY"] = input_gem.strip()
-                    os.environ["GEMINI_API_KEY"] = input_gem.strip()
-                if input_tav.strip():
-                    os.environ["TAVILY_API_KEY"] = input_tav.strip()
-                check_environment_status.clear()
-                st.rerun()
-
-        st.markdown(
-            """
-            <div style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 11.5px; color: #92400E; line-height: 1.45;">
-              <strong>For permanent connection on Streamlit Cloud:</strong><br/>
-              In your app dashboard, go to <em>Manage app &gt; Settings &gt; Secrets</em>, and paste:<br/>
-              <code>GOOGLE_API_KEY = "..."</code><br/>
-              <code>TAVILY_API_KEY = "..."</code>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("Backend API keys disconnected. Retesting...")
 
     st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
     col_btn1, col_btn2 = st.columns(2)
