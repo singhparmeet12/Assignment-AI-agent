@@ -1,10 +1,20 @@
 # Newsletter Agent
 
-An autonomous multi-step editorial agent that researches, drafts, critiques, revises, and publishes an AI agent newsletter with an Autonomous / Human-in-the-Loop toggle.
+> An autonomous multi-step AI editorial newsroom that researches, drafts, critiques, revises, and publishes publication-grade AI newsletters with an interactive Human-in-the-Loop checkpoint.
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-FF6F00?style=flat-square&logo=chainlink&logoColor=white)](https://github.com/langchain-ai/langgraph)
+[![Model](https://img.shields.io/badge/LLM-Gemini%203.5%20Flash--Lite-4285F4?style=flat-square&logo=google&logoColor=white)](https://aistudio.google.com/)
+[![Search](https://img.shields.io/badge/Search-Tavily%20AI-00C49F?style=flat-square)](https://tavily.com/)
+[![UI](https://img.shields.io/badge/Frontend-Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io/)
 
 **Live Demo:** [assignment-ai-agent.streamlit.app](https://assignment-ai-agent.streamlit.app/)
 
 ---
+
+### Overview
+
+**Newsletter Agent** is an end-to-end autonomous editorial pipeline engineered to solve one of the biggest challenges in agentic workflows: producing factually grounded, publication-ready technical writing without human fatigue or hallucination risks. Built as a stateful, cyclic state machine in **LangGraph**, the agent deploys **Tavily AI** for targeted real-time web retrieval, harnesses **Google Gemini (3.5 Flash-Lite)** for structured synthesis and narrative drafting, and runs a rigorous internal fact-checking and coverage critique loop before publishing. With a seamless toggle between hands-free **Autonomous Mode** and an interactive **Human-in-the-Loop (HITL)** checkpoint, it delivers responsive, email-client-ready HTML deliverables while giving human editors complete steering control.
 
 ## Architecture
 
