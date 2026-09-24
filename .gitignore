@@ -1,0 +1,21 @@
+# Environment variables
+.env
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Streamlit config / cache
+.streamlit/
+
+# Scratch & temporary test scripts
+scratch/
+.idea/
+.vscode/
